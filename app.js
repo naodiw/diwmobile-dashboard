@@ -4,6 +4,9 @@
   /* ================================================================ config */
 
   const API_URL = window.ENVIDAS_API || '';
+  // Cloudflare Worker ที่แคชคำตอบของ Apps Script ไว้ (ตอบใน ~0.2 วินาที) ใช้เป็นทางหลัก
+  // ถ้า Worker มีปัญหา ถอยกลับไปเรียก Apps Script ตรง ๆ
+  const CACHE_API = (window.ENVIDAS_CACHE_API || '').replace(/\/+$/, '');
   const params = new URLSearchParams(location.search);
   const MOCK = params.has('mock'); // ?mock=1 ใช้ไฟล์ dev/sample-*.json แทน API (ไว้พัฒนาบนเครื่อง)
   const REFRESH_MS = 60_000;
@@ -141,6 +144,26 @@
     const url = new URL(API_URL);
     Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
     url.searchParams.set('_', `${Date.now()}${Math.random().toString(36).slice(2, 6)}`);
+    return fetchJsonUrl(url.toString(), outerSignal, timeoutMs);
+  }
+
+  /** ทางหลัก: อ่านจาก Cloudflare Worker ลอง 2 ครั้ง ครั้งละไม่เกิน 10 วินาที */
+  async function fetchWorker(days) {
+    let last;
+    for (let i = 0; i < 2; i++) {
+      try {
+        const d = await fetchJsonUrl(`${CACHE_API}/api?days=${days}`, undefined, 10_000);
+        if (d && d.status === 'ok') return d;
+        throw new Error((d && d.message) || 'Worker ตอบกลับผิดรูปแบบ');
+      } catch (e) {
+        last = e;
+      }
+    }
+    throw last;
+  }
+
+  async function fetchJsonUrl(href, outerSignal, timeoutMs) {
+    const url = { toString: () => href };
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     if (outerSignal && ctrl) outerSignal.addEventListener('abort', () => ctrl.abort(), { once: true });
     const timer = setTimeout(() => ctrl && ctrl.abort(), timeoutMs);
@@ -249,14 +272,24 @@
       } else {
         if (!API_URL) throw new Error('ยังไม่ได้ตั้งค่า URL ของ API ใน index.html (window.ENVIDAS_API)');
         const query = { dashboard: '1', days: state.days, resolution: 'auto' };
-        try {
-          data = await fetchHedged(query);
-        } catch (e1) {
-          // สำรอง: JSONP (เผื่อเบราว์เซอร์/เครือข่ายบางแห่งบล็อก fetch ข้ามโดเมน)
+        let e0 = null;
+        if (CACHE_API) {
           try {
-            data = await fetchJsonp(query);
-          } catch (e2) {
-            throw new Error(`fetch: ${e1.message} / script: ${e2.message}`);
+            data = await fetchWorker(state.days);
+          } catch (err) {
+            e0 = err;
+          }
+        }
+        if (!data) {
+          try {
+            data = await fetchHedged(query);
+          } catch (e1) {
+            // สำรองสุดท้าย: JSONP (เผื่อเบราว์เซอร์/เครือข่ายบางแห่งบล็อก fetch ข้ามโดเมน)
+            try {
+              data = await fetchJsonp(query);
+            } catch (e2) {
+              throw new Error(`${e0 ? `cache: ${e0.message} / ` : ''}fetch: ${e1.message} / script: ${e2.message}`);
+            }
           }
         }
       }
