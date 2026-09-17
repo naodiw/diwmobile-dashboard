@@ -228,12 +228,10 @@
   const addressText = (loc) => (loc && loc.address && loc.address.text) || '';
 
   function renderHeader(d) {
-    $('stationName').textContent = d.station ? `สถานี ${d.station.replace(/_/g, ' ')}` : 'สถานีตรวจวัด';
     // ชื่อจุดที่กรอกเองมาก่อน แล้วต่อด้วยที่อยู่ระดับตำบลที่ได้จากพิกัด
     const place = [placeLabel(d.location), addressText(d.location)].filter(Boolean).join(' · ');
     $('placeLine').textContent = place ? `จอดอยู่ที่ ${place}` : '';
     $('updatedAt').textContent = d.live.updatedAt ? `อัปเดต ${thaiDateTime(d.live.updatedAtMs)} น.` : '';
-    document.title = `${d.station || 'สถานีตรวจวัด'} · คุณภาพอากาศ`;
   }
 
   function setFreshness(kind, text) {

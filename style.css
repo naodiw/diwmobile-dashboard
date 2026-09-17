@@ -92,7 +92,8 @@ h3 { font-size: 1rem; font-weight: 600; }
   font-size: 0.85rem;
   font-weight: 600;
 }
-.place-line { margin: 4px 0 0; color: var(--text-2); }
+.org-line { margin: 2px 0 0; color: var(--text); font-size: clamp(0.95rem, 1.8vw, 1.1rem); font-weight: 600; }
+.place-line { margin: 6px 0 0; color: var(--text-2); }
 
 .masthead-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 
