@@ -69,7 +69,7 @@ button { font: inherit; color: inherit; }
 .page {
   width: min(1320px, 100%);
   margin: 0 auto;
-  padding: 24px 16px 48px;
+  padding: 24px max(16px, env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
 }
 
 h1, h2, h3 { margin: 0; line-height: 1.25; }
@@ -146,6 +146,15 @@ h3 { font-size: 1rem; font-weight: 600; }
   cursor: pointer;
 }
 .btn-link:hover { background: var(--surface-2); }
+
+.notice-box {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+  font-size: 0.9rem;
+}
 
 .error-box {
   margin-bottom: 16px;
@@ -373,6 +382,16 @@ thead th:first-child { z-index: 2; background: var(--surface-2); }
   .overview, .duo { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
+  .aqi-card { padding: 16px; }
+  .aqi-row { gap: 12px; flex-wrap: wrap; }
+  .aqi-scale li { font-size: 0.66rem; }
+  .chart-lg { height: 260px; }
+  .chart-md { height: 300px; }
+  .map-card { min-height: 280px; }
+  .map { min-height: 200px; }
+  .panel { padding: 12px; }
+  .duo { gap: 12px; }
+  .btn-link { justify-content: center; min-height: 40px; }
   .page { padding-top: 16px; }
   .masthead { flex-direction: column; }
   .masthead-actions { width: 100%; justify-content: space-between; }
@@ -383,4 +402,17 @@ thead th:first-child { z-index: 2; background: var(--surface-2); }
   .tile-value { font-size: 1.5rem; }
   .map-meta { flex-direction: column; align-items: stretch; }
   .multiples { grid-template-columns: 1fr; }
+}
+
+/* จอแคบ: ป้ายใต้แถบสี AQI ตัดกลางคำภาษาไทย ซ่อนไว้ ชื่อระดับแสดงตัวใหญ่ด้านบนอยู่แล้ว */
+@media (max-width: 420px) {
+  .aqi-scale li span { display: none; }
+}
+
+/* จอเล็กมาก ต้องอยู่ท้ายไฟล์ ให้ชนะกฎของ 560px */
+@media (max-width: 360px) {
+  .tiles { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .tile { padding: 10px; }
+  .tile-value { font-size: 1.3rem; }
+  .segmented button { padding: 0 6px; font-size: 0.8rem; }
 }

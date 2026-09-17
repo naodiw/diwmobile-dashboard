@@ -105,7 +105,28 @@
 
   /* ================================================================ state */
 
-  const state = { days: 7, data: null, charts: {}, map: null, marker: null, ring: null, timer: null, loading: false };
+  const state = { days: 7, data: null, charts: {}, map: null, marker: null, ring: null, timer: null, loading: false, failures: 0, retryTimer: null };
+
+  /* ------------------------------------------------------------ snapshot */
+  // เก็บข้อมูลชุดล่าสุดที่โหลดสำเร็จไว้ในเบราว์เซอร์ของผู้ชม เปิดหน้าครั้งต่อไป
+  // จะเห็นข้อมูลทันทีระหว่างรอ API และยังดูได้ถ้า API ล่ม (เวลาอัปเดตบอกความเก่าตามจริง)
+  const snapKey = (days) => `envidas.snapshot.${days}`;
+  function saveSnapshot(days, data) {
+    try { localStorage.setItem(snapKey(days), JSON.stringify(data)); } catch (e) { /* storage เต็มหรือถูกปิด ไม่เป็นไร */ }
+  }
+  function loadSnapshot(days) {
+    try {
+      const raw = localStorage.getItem(snapKey(days));
+      const d = raw ? JSON.parse(raw) : null;
+      return d && d.status === 'ok' && d.live ? d : null;
+    } catch (e) { return null; }
+  }
+
+  function setNotice(text) {
+    const box = $('noticeBox');
+    box.textContent = text || '';
+    box.hidden = !text;
+  }
 
   /* ================================================================ fetch */
 
@@ -146,15 +167,35 @@
         data = await fetchJsonp({ dashboard: '1', days: state.days, resolution: 'auto' });
       }
       if (!data || data.status !== 'ok') throw new Error((data && data.message) || 'API ตอบกลับผิดรูปแบบ');
+      if (data.days && Number(data.days) !== state.days) return; // ผู้ใช้เปลี่ยนช่วงเวลาไปแล้ว
       state.data = data;
       state.lastLoadAt = Date.now();
+      state.failures = 0;
+      clearTimeout(state.retryTimer);
       $('errorBox').hidden = true;
+      setNotice(data.stale ? 'Google Sheets ขัดข้องชั่วคราว กำลังแสดงข้อมูลสำรองชุดล่าสุด' : '');
+      if (!data.stale) saveSnapshot(state.days, data);
       render();
     } catch (err) {
-      const box = $('errorBox');
-      box.textContent = `โหลดข้อมูลไม่สำเร็จ: ${err.message}${state.data ? ' (แสดงข้อมูลชุดก่อนหน้า)' : ''}`;
-      box.hidden = false;
-      if (!state.data) setFreshness('down', 'โหลดไม่สำเร็จ');
+      state.failures += 1;
+      const snap = !state.data ? loadSnapshot(state.days) : null;
+      if (snap) {
+        state.data = snap;
+        render();
+      }
+      if (state.data) {
+        $('errorBox').hidden = true;
+        setNotice(`ยังเชื่อมต่อข้อมูลล่าสุดไม่ได้ กำลังแสดงข้อมูลที่โหลดไว้ครั้งก่อน และจะลองใหม่อัตโนมัติ (${err.message})`);
+      } else {
+        const box = $('errorBox');
+        box.textContent = `โหลดข้อมูลไม่สำเร็จ: ${err.message} · จะลองใหม่อัตโนมัติ`;
+        box.hidden = false;
+        setFreshness('down', 'โหลดไม่สำเร็จ');
+      }
+      // ลองใหม่เร็วขึ้นหลังพลาด 15 วิ -> 30 -> 60 วิ ไม่ต้องรอรอบปกติ
+      clearTimeout(state.retryTimer);
+      const wait = Math.min(15_000 * 2 ** (state.failures - 1), REFRESH_MS);
+      state.retryTimer = setTimeout(() => document.visibilityState === 'visible' && load(), wait);
     } finally {
       state.loading = false;
       $('refreshBtn').classList.remove('is-spinning');
@@ -294,7 +335,14 @@
     $('map').classList.toggle('is-dark', isDark());
 
     if (!state.map) {
-      state.map = L.map('map', { scrollWheelZoom: false, attributionControl: true }).setView([loc.lat, loc.lon], 14);
+      // บนมือถือปิดการลากด้วยนิ้วเดียว ไม่งั้นนิ้วที่ปัดเลื่อนหน้าจะไปลากแผนที่แทน
+      // ยังซูมได้ด้วยสองนิ้วหรือปุ่ม +/−
+      state.map = L.map('map', {
+        scrollWheelZoom: false,
+        dragging: !L.Browser.mobile,
+        touchZoom: true,
+        attributionControl: true,
+      }).setView([loc.lat, loc.lon], 14);
       state.tiles = L.tileLayer(tileUrl, {
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
@@ -725,6 +773,11 @@
       b.setAttribute('aria-pressed', String(on));
     });
     try { localStorage.setItem('envidas.days', String(days)); } catch (e) { /* ไม่มี storage ก็ไม่เป็นไร */ }
+    const snap = loadSnapshot(days);
+    if (snap) {
+      state.data = snap;
+      render();
+    }
     load();
   }
 
@@ -764,6 +817,11 @@
       resizeTimer = setTimeout(() => Object.values(state.charts).forEach((c) => c.resize()), 120);
     });
 
+    const snap = loadSnapshot(state.days);
+    if (snap) {
+      state.data = snap;
+      render();
+    }
     load();
     schedule();
   });
