@@ -137,12 +137,13 @@
    * ล็อกอิน Google ไว้ (โดยเฉพาะหลายบัญชีบนมือถือ) Apps Script อาจตอบเป็นหน้า HTML
    * แทนข้อมูล ทำให้หน้าเว็บขึ้นแต่ไม่มีข้อมูล (เจอจริงบนมือถือ 17/09/2026)
    */
-  async function fetchApi(query) {
+  async function fetchApi(query, outerSignal, timeoutMs = 25_000) {
     const url = new URL(API_URL);
     Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
-    url.searchParams.set('_', String(Date.now()));
+    url.searchParams.set('_', `${Date.now()}${Math.random().toString(36).slice(2, 6)}`);
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
-    const timer = setTimeout(() => ctrl && ctrl.abort(), 45_000);
+    if (outerSignal && ctrl) outerSignal.addEventListener('abort', () => ctrl.abort(), { once: true });
+    const timer = setTimeout(() => ctrl && ctrl.abort(), timeoutMs);
     try {
       const r = await fetch(url.toString(), {
         method: 'GET',
@@ -165,6 +166,54 @@
     }
   }
 
+  /**
+   * ยิงคำขอแบบสำรองซ้อน (hedged request)
+   *
+   * วัดจริง 17/09/2026: Web App ของ Apps Script ตอบครึ่งหนึ่งภายใน 7 วินาที แต่บางครั้ง
+   * นาน 30+ วินาที หรือตอบ 404 เป็นหน้า HTML ราว 15% ทั้งที่โค้ดในสคริปต์ใช้แค่ ~1 วินาที
+   * ความช้าอยู่ที่ชั้นของ Google เอง และคำขอใหม่มักผ่านทันที
+   * จึงยิงคำขอแรก ถ้า 5 วินาทียังไม่ตอบให้ยิงสำรองเพิ่ม (สูงสุด 3 คำขอ) ถ้าพลาดยิงใหม่ทันที
+   * ใช้ผลของคำขอที่ตอบถูกก่อน แล้วยกเลิกที่เหลือ ฝั่งเซิร์ฟเวอร์มีแคชจึงแทบไม่เพิ่มภาระ
+   */
+  function fetchHedged(query) {
+    const MAX = 3;
+    const HEDGE_MS = [0, 5_000, 12_000];
+    const master = typeof AbortController === 'function' ? new AbortController() : null;
+    return new Promise((resolve, reject) => {
+      let started = 0;
+      let failed = 0;
+      let settled = false;
+      const errors = [];
+      const timers = [];
+      const launch = () => {
+        if (settled || started >= MAX) return;
+        started += 1;
+        fetchApi(query, master && master.signal)
+          .then((data) => {
+            if (settled) return;
+            if (!data || data.status !== 'ok') throw new Error((data && data.message) || 'API ตอบกลับผิดรูปแบบ');
+            settled = true;
+            timers.forEach(clearTimeout);
+            if (master) master.abort();
+            resolve(data);
+          })
+          .catch((err) => {
+            if (settled) return;
+            failed += 1;
+            errors.push(err.message);
+            if (failed >= MAX) {
+              settled = true;
+              timers.forEach(clearTimeout);
+              reject(new Error(errors.join(' / ')));
+            } else {
+              launch(); // พลาดแล้วยิงใหม่ทันที ไม่ต้องรอรอบสำรอง
+            }
+          });
+      };
+      HEDGE_MS.forEach((ms) => timers.push(setTimeout(launch, ms)));
+    });
+  }
+
   function fetchJsonp(query) {
     return new Promise((resolve, reject) => {
       const cb = `envidas_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -174,7 +223,7 @@
       url.searchParams.set('_', String(Date.now()));
 
       const script = document.createElement('script');
-      const timer = setTimeout(() => done(new Error('เซิร์ฟเวอร์ตอบช้าเกินไป')), 45_000);
+      const timer = setTimeout(() => done(new Error('เซิร์ฟเวอร์ตอบช้าเกินไป')), 20_000);
       function done(err, payload) {
         clearTimeout(timer);
         delete window[cb];
@@ -201,7 +250,7 @@
         if (!API_URL) throw new Error('ยังไม่ได้ตั้งค่า URL ของ API ใน index.html (window.ENVIDAS_API)');
         const query = { dashboard: '1', days: state.days, resolution: 'auto' };
         try {
-          data = await fetchApi(query);
+          data = await fetchHedged(query);
         } catch (e1) {
           // สำรอง: JSONP (เผื่อเบราว์เซอร์/เครือข่ายบางแห่งบล็อก fetch ข้ามโดเมน)
           try {
