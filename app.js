@@ -709,23 +709,35 @@
     const h = d.diurnal;
     if (!c || !h) return;
     const days = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
-    const vals = h.cells.map((x) => x[2]);
-    const max = vals.length ? Math.max(...vals) : 1;
-    const ramp = isDark()
-      ? ['#0d366b', '#184f95', '#2a78d6', '#6da7ec', '#cde2fb']
-      : ['#cde2fb', '#86b6ef', '#3987e5', '#1c5cab', '#0d366b'];
+    // ลงสีตามช่วง PM2.5 ของ TH AQI ใช้สีชุดเดียวกับการ์ด AQI ด้านบน (ยึดตาม pm2_5.nrct.go.th)
+    // ช่องแต่ละช่องเป็นค่าเฉลี่ยรายชั่วโมง ส่วนเกณฑ์ทางการเป็นค่าเฉลี่ย 24 ชม. จึงใช้เพื่อเทียบระดับเท่านั้น
+    const PM25_PIECES = [
+      { gte: 0, lte: 15, label: '0–15 ดีมาก', band: 0 },
+      { gt: 15, lte: 25, label: '15.1–25 ดี', band: 1 },
+      { gt: 25, lte: 37.5, label: '25.1–37.5 ปานกลาง', band: 2 },
+      { gt: 37.5, lte: 75, label: '37.6–75 มีผลกระทบ', band: 3 },
+      { gt: 75, label: '>75 มีผลกระทบมาก', band: 4 },
+    ].map((p) => ({ ...p, color: AQI_BANDS[p.band].color }));
+    $('heatLegend').innerHTML = PM25_PIECES.map(
+      (p) => `<span><i class="sw" style="background:${p.color}"></i>${p.label}</span>`
+    ).join('');
+
+    const levelOf = (v) => {
+      const p = PM25_PIECES.find((x) => (x.gte !== undefined ? v >= x.gte : v > x.gt) && (x.lte === undefined || v <= x.lte));
+      return p ? AQI_BANDS[p.band].label : '';
+    };
 
     c.setOption(
       {
         animation: false,
         textStyle: { fontFamily: t.font },
-        grid: { left: 36, right: 12, top: 8, bottom: 64 },
+        grid: { left: 36, right: 12, top: 8, bottom: 28 },
         tooltip: {
           backgroundColor: t.surface,
           borderColor: t.line,
           textStyle: { color: t.text, fontFamily: t.font },
           formatter: (p) =>
-            `วัน${days[p.value[1]].replace('.', '')} เวลา ${String(p.value[0]).padStart(2, '0')}:00<br>PM2.5 เฉลี่ย <b>${fmt(p.value[2], 1)} µg/m³</b><br><span style="color:${t.text3}">จาก ${p.value[3]} ชั่วโมง</span>`,
+            `วัน${days[p.value[1]].replace('.', '')} เวลา ${String(p.value[0]).padStart(2, '0')}:00<br>PM2.5 เฉลี่ย <b>${fmt(p.value[2], 1)} µg/m³</b><br>${levelOf(p.value[2])}<br><span style="color:${t.text3}">จาก ${p.value[3]} ชั่วโมง</span>`,
         },
         xAxis: {
           type: 'category',
@@ -744,20 +756,12 @@
           axisLabel: { color: t.text3 },
         },
         visualMap: {
-          // แต่ละช่องเก็บ [ชั่วโมง, วัน, ค่าเฉลี่ย, จำนวนชั่วโมง] ถ้าไม่ระบุ
-          // ECharts จะเอามิติสุดท้าย (จำนวนชั่วโมง) มาลงสีแทนค่าเฉลี่ย
+          // แต่ละช่องเก็บ [ชั่วโมง, วัน, ค่าเฉลี่ย, จำนวนชั่วโมง] ต้องระบุว่าลงสีจากมิติที่ 2 (ค่าเฉลี่ย)
           dimension: 2,
-          min: 0,
-          max: Math.ceil(max),
-          calculable: false,
-          orient: 'horizontal',
-          left: 'center',
-          bottom: 4,
-          itemWidth: 12,
-          itemHeight: 160,
-          text: [`${Math.ceil(max)} µg/m³`, '0'],
-          textStyle: { color: t.text2 },
-          inRange: { color: ramp },
+          type: 'piecewise',
+          pieces: PM25_PIECES.map(({ band, ...p }) => p),
+          // คำอธิบายสีทำเป็น HTML ใต้กราฟแทน เพราะของ ECharts ไม่ตัดบรรทัดบนจอมือถือ
+          show: false,
         },
         series: [
           {

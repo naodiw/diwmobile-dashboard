@@ -337,6 +337,8 @@ h3 { font-size: 1rem; font-weight: 600; }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--text-2); font-size: 0.82rem; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+.legend i.sw { width: 12px; height: 12px; border-radius: 3px; }
+.heat-legend { justify-content: center; gap: 6px 12px; margin-top: 4px; font-size: 0.78rem; }
 .legend i.dash { background: repeating-linear-gradient(90deg, var(--text-3) 0 4px, transparent 4px 7px); }
 
 .chart { width: 100%; }

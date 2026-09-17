@@ -17,10 +17,10 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap">
   <!-- ไลบรารีเก็บสำเนาไว้ใน vendor/ เอง ไม่พึ่ง CDN ภายนอก หน้าเว็บจะไม่พังถ้า CDN ล่มหรือเลิกให้บริการ -->
   <link rel="stylesheet" href="./vendor/leaflet-1.9.4.css">
-  <link rel="stylesheet" href="./style.css?v=6">
+  <link rel="stylesheet" href="./style.css?v=7">
   <script defer src="./vendor/echarts-5.5.1.min.js"></script>
   <script defer src="./vendor/leaflet-1.9.4.js"></script>
-  <script defer src="./app.js?v=7"></script>
+  <script defer src="./app.js?v=9"></script>
 </head>
 <body>
   <div class="page">
@@ -131,9 +131,10 @@
         <article class="panel">
           <div class="panel-head">
             <h3>PM2.5 ตามวันและชั่วโมง</h3>
-            <span class="section-sub">ค่าเฉลี่ยในช่วงที่เลือก</span>
+            <span class="section-sub">ค่าเฉลี่ยรายชั่วโมง · สีตามระดับ TH AQI</span>
           </div>
           <div id="heatChart" class="chart chart-md"></div>
+          <div id="heatLegend" class="legend heat-legend" aria-label="ระดับสี PM2.5"></div>
         </article>
       </div>
 
