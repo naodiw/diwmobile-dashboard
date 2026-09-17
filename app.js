@@ -791,6 +791,11 @@
     const h = d.diurnal;
     if (!c || !h) return;
     const days = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
+    // ช่วงยาวอาจมีข้อมูลจริงไม่เต็มช่วง (เครื่องปิด/รถไม่ได้วัด) บอกผู้ชมว่าคำนวณจากกี่วัน
+    $('heatNote').textContent =
+      h.daysWithData && h.daysWithData < d.days
+        ? `จากข้อมูลจริง ${h.daysWithData} วัน · สีตามระดับ TH AQI`
+        : 'ค่าเฉลี่ยรายชั่วโมง · สีตามระดับ TH AQI';
     // ลงสีตามช่วง PM2.5 ของ TH AQI ใช้สีชุดเดียวกับการ์ด AQI ด้านบน (ยึดตาม pm2_5.nrct.go.th)
     // ช่องแต่ละช่องเป็นค่าเฉลี่ยรายชั่วโมง ส่วนเกณฑ์ทางการเป็นค่าเฉลี่ย 24 ชม. จึงใช้เพื่อเทียบระดับเท่านั้น
     const PM25_PIECES = [
@@ -819,7 +824,7 @@
           borderColor: t.line,
           textStyle: { color: t.text, fontFamily: t.font },
           formatter: (p) =>
-            `วัน${days[p.value[1]].replace('.', '')} เวลา ${String(p.value[0]).padStart(2, '0')}:00<br>PM2.5 เฉลี่ย <b>${fmt(p.value[2], 1)} µg/m³</b><br>${levelOf(p.value[2])}<br><span style="color:${t.text3}">จาก ${p.value[3]} ชั่วโมง</span>`,
+            `วัน${days[p.value[1]].replace('.', '')} เวลา ${String(p.value[0]).padStart(2, '0')}:00–${String(p.value[0]).padStart(2, '0')}:59<br>PM2.5 เฉลี่ย <b>${fmt(p.value[2], 1)} µg/m³</b><br>${levelOf(p.value[2])}<br><span style="color:${t.text3}">จาก ${p.value[3]} ชั่วโมง</span>`,
         },
         xAxis: {
           type: 'category',
