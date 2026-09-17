@@ -786,18 +786,133 @@
     );
   }
 
+  /* -------------------------------------------------------------- heatmap */
+  // แบบเดียวกับหน้า T640: เลือกดูเป็น วัน / สัปดาห์ / เดือน / ปี ตามปฏิทินจริง
+  //   วัน     แกน x = ชั่วโมง, 1 แถว
+  //   สัปดาห์  แกน x = ชั่วโมง, แกน y = จันทร์–อาทิตย์ของสัปดาห์นั้น
+  //   เดือน    แกน x = ชั่วโมง, แกน y = ทุกวันที่ในเดือน
+  //   ปี      แกน x = เดือน, แกน y = วันที่ 1–31 (ค่าเฉลี่ยรายวัน)
+  // ช่องไม่มีข้อมูลเป็นสีเทา เวลาเป็น "เวลาสิ้นสุดชั่วโมง" ตามที่ Envidas ลงไว้ (แถว 10:00 = 09:01–10:00)
+  // ข้อมูลรายชั่วโมงมาจาก pm25Hourly ของ API ถ้าช่วงที่โหลดอยู่ไม่ครอบคลุมช่วงที่เลือก จะโหลดชุด 1 ปีมาใช้
+
+  const DAY_MS = 86400e3;
+  const BKK_MS = 7 * 3600e3;
+  const HEAT_MODES = { day: 'วัน', week: 'สัปดาห์', month: 'เดือน', year: 'ปี' };
+  const MODE_BY_DAYS = { 1: 'day', 7: 'week', 30: 'month', 90: 'month', 365: 'year' };
+  const WEEKDAYS = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
+  const MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+  const HOUR_ENDING = 'เวลาสิ้นสุดชั่วโมง';
+  const heat = { mode: 'week', period: '', full: null, fullAt: 0, fullLoading: false };
+
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const bkk = (ts) => new Date(ts + BKK_MS); // อ่านด้วย getUTC* = เวลาไทย
+  const localMs = (y, m0, d) => Date.UTC(y, m0, d) - BKK_MS;
+  const dm = (ts) => `${pad2(bkk(ts).getUTCDate())}/${pad2(bkk(ts).getUTCMonth() + 1)}`;
+
+  function defaultPeriod(mode) {
+    const n = bkk(Date.now());
+    const y = n.getUTCFullYear();
+    if (mode === 'year') return String(y);
+    if (mode === 'month') return `${y}-${pad2(n.getUTCMonth() + 1)}`;
+    return `${y}-${pad2(n.getUTCMonth() + 1)}-${pad2(n.getUTCDate())}`;
+  }
+
+  function periodMatches(mode, v) {
+    if (mode === 'year') return /^\d{4}$/.test(v);
+    if (mode === 'month') return /^\d{4}-\d{2}$/.test(v);
+    return /^\d{4}-\d{2}-\d{2}$/.test(v);
+  }
+
+  /** ช่วงเวลา [from, to) ของช่วงที่เลือก */
+  function periodRange(mode, v) {
+    const [y, m, d] = v.split('-').map(Number);
+    if (mode === 'year') return { from: localMs(y, 0, 1), to: localMs(y + 1, 0, 1) };
+    if (mode === 'month') return { from: localMs(y, m - 1, 1), to: localMs(y, m, 1) };
+    const day = localMs(y, m - 1, d);
+    if (mode === 'day') return { from: day, to: day + DAY_MS };
+    const monday = day - ((bkk(day).getUTCDay() + 6) % 7) * DAY_MS;
+    return { from: monday, to: monday + 7 * DAY_MS };
+  }
+
+  function periodText(mode, range) {
+    const s = bkk(range.from);
+    const be = (x) => x.getUTCFullYear() + 543;
+    if (mode === 'year') return `ปี ${be(s)}`;
+    if (mode === 'month') return `${MONTHS[s.getUTCMonth()]} ${be(s)}`;
+    if (mode === 'day') return `${s.getUTCDate()} ${MONTHS[s.getUTCMonth()]} ${be(s)}`;
+    const e = bkk(range.to - DAY_MS);
+    return `${s.getUTCDate()} ${MONTHS[s.getUTCMonth()]} – ${e.getUTCDate()} ${MONTHS[e.getUTCMonth()]} ${be(e)}`;
+  }
+
+  /** ชุดข้อมูลที่ครอบคลุมช่วงที่เลือก: ใช้ชุดที่โหลดอยู่ถ้าพอ ไม่งั้นใช้ชุด 1 ปี */
+  function heatSource(range) {
+    const d = state.data;
+    if (d && d.pm25Hourly) {
+      const winFrom = (d.live && d.live.updatedAtMs ? d.live.updatedAtMs : Date.now()) - d.days * DAY_MS;
+      if (d.days >= 365 || winFrom <= range.from + 3600e3) return d;
+    }
+    if (heat.full && Date.now() - heat.fullAt < 5 * REFRESH_MS) return heat.full;
+    loadHeatFull();
+    return heat.full || (d && d.pm25Hourly ? d : null);
+  }
+
+  async function loadHeatFull() {
+    if (heat.fullLoading) return;
+    heat.fullLoading = true;
+    try {
+      let data;
+      if (MOCK) {
+        data = await (await fetch('./dev/sample-365.json', { cache: 'no-store' })).json();
+      } else if (CACHE_API) {
+        try { data = await fetchWorker(365); } catch (e) { /* ลองทางสำรอง */ }
+      }
+      if (!data && !MOCK) data = await fetchHedged({ dashboard: '1', days: 365, resolution: 'auto' });
+      if (data && data.status === 'ok' && data.pm25Hourly) {
+        heat.full = data;
+        heat.fullAt = Date.now();
+        renderHeatmap(state.data, theme());
+      }
+    } catch (e) {
+      // โหลดไม่ได้ก็แสดงเท่าที่มี จะลองใหม่รอบวาดถัดไป
+    } finally {
+      heat.fullLoading = false;
+    }
+  }
+
+  function syncHeatControls() {
+    document.querySelectorAll('#heatMode button').forEach((b) => {
+      const on = b.dataset.mode === heat.mode;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+    const input = $('heatPeriod');
+    const type = heat.mode === 'year' ? 'number' : heat.mode === 'month' ? 'month' : 'date';
+    if (input.type !== type) input.type = type;
+    if (type === 'number') {
+      input.min = '2000';
+      input.max = '2100';
+      input.step = '1';
+    }
+    $('heatPeriodLabel').textContent = { day: 'วันที่', week: 'สัปดาห์ของ', month: 'เดือน', year: 'ปี ค.ศ.' }[heat.mode];
+    input.value = heat.period;
+  }
+
+  function setHeatMode(mode, keepPeriod) {
+    heat.mode = mode;
+    if (!keepPeriod || !periodMatches(mode, heat.period)) heat.period = defaultPeriod(mode);
+    syncHeatControls();
+  }
+
   function renderHeatmap(d, t) {
     const c = chart('heatChart');
-    const h = d.diurnal;
-    if (!c || !h) return;
-    const days = ['จ.', 'อ.', 'พ.', 'พฤ.', 'ศ.', 'ส.', 'อา.'];
-    // ช่วงยาวอาจมีข้อมูลจริงไม่เต็มช่วง (เครื่องปิด/รถไม่ได้วัด) บอกผู้ชมว่าคำนวณจากกี่วัน
-    $('heatNote').textContent =
-      h.daysWithData && h.daysWithData < d.days
-        ? `จากข้อมูลจริง ${h.daysWithData} วัน · สีตามระดับ TH AQI`
-        : 'ค่าเฉลี่ยรายชั่วโมง · สีตามระดับ TH AQI';
+    if (!c) return;
+    if (!periodMatches(heat.mode, heat.period)) heat.period = defaultPeriod(heat.mode);
+    const mode = heat.mode;
+    const range = periodRange(mode, heat.period);
+    const src = heatSource(range);
+
     // ลงสีตามช่วง PM2.5 ของ TH AQI ใช้สีชุดเดียวกับการ์ด AQI ด้านบน (ยึดตาม pm2_5.nrct.go.th)
-    // ช่องแต่ละช่องเป็นค่าเฉลี่ยรายชั่วโมง ส่วนเกณฑ์ทางการเป็นค่าเฉลี่ย 24 ชม. จึงใช้เพื่อเทียบระดับเท่านั้น
+    // ช่องรายชั่วโมงเทียบกับเกณฑ์เฉลี่ย 24 ชม. จึงใช้เพื่อเทียบระดับเท่านั้น
     const PM25_PIECES = [
       { gte: 0, lte: 15, label: '0–15 ดีมาก', band: 0 },
       { gt: 15, lte: 25, label: '15.1–25 ดี', band: 1 },
@@ -805,46 +920,129 @@
       { gt: 37.5, lte: 75, label: '37.6–75 มีผลกระทบ', band: 3 },
       { gt: 75, label: '>75 มีผลกระทบมาก', band: 4 },
     ].map((p) => ({ ...p, color: AQI_BANDS[p.band].color }));
-    $('heatLegend').innerHTML = PM25_PIECES.map(
-      (p) => `<span><i class="sw" style="background:${p.color}"></i>${p.label}</span>`
-    ).join('');
-
+    const missingColor = isDark() ? '#3a3a36' : '#d9d8d3';
+    $('heatLegend').innerHTML =
+      PM25_PIECES.map((p) => `<span><i class="sw" style="background:${p.color}"></i>${p.label}</span>`).join('') +
+      `<span><i class="sw" style="background:${missingColor};outline:1px solid ${t.line}"></i>ไม่มีข้อมูล</span>`;
     const levelOf = (v) => {
       const p = PM25_PIECES.find((x) => (x.gte !== undefined ? v >= x.gte : v > x.gt) && (x.lte === undefined || v <= x.lte));
       return p ? AQI_BANDS[p.band].label : '';
     };
 
+    // ค่ารายชั่วโมงในช่วงที่เลือก [เวลา, ค่า]
+    const points = [];
+    const h = src && src.pm25Hourly;
+    if (h && h.start !== null) {
+      const i0 = Math.max(0, Math.ceil((range.from - h.start) / h.step));
+      for (let i = i0; i < h.v.length; i++) {
+        const ts = h.start + i * h.step;
+        if (ts >= range.to) break;
+        if (h.v[i] !== null) points.push([ts, h.v[i]]);
+      }
+    }
+
+    const hours = Array.from({ length: 24 }, (_, i) => pad2(i));
+    let xLabels = hours;
+    let yLabels;
+    let data = [];
+    let cellLabel; // (x, y) -> ข้อความหัว tooltip
+    let valueText = (v) => `PM2.5 <b>${fmt(v, 1)} µg/m³</b>`;
+
+    if (mode === 'year') {
+      const year = bkk(range.from).getUTCFullYear();
+      xLabels = MONTHS;
+      yLabels = Array.from({ length: 31 }, (_, i) => String(i + 1));
+      const sum = {};
+      const cnt = {};
+      points.forEach(([ts, v]) => {
+        const b = bkk(ts);
+        const k = `${b.getUTCMonth()}-${b.getUTCDate() - 1}`;
+        sum[k] = (sum[k] || 0) + v;
+        cnt[k] = (cnt[k] || 0) + 1;
+      });
+      const valid = (m, dIdx) => new Date(Date.UTC(year, m, dIdx + 1)).getUTCMonth() === m;
+      for (let m = 0; m < 12; m++) {
+        for (let di = 0; di < 31; di++) {
+          if (!valid(m, di)) continue;
+          const k = `${m}-${di}`;
+          data.push(cnt[k] ? [m, di, Math.round((sum[k] / cnt[k]) * 10) / 10, cnt[k]] : [m, di, null, 0]);
+        }
+      }
+      cellLabel = (x, y) => `${y + 1} ${MONTHS[x]} ${year + 543}`;
+      valueText = (v, n) => `PM2.5 เฉลี่ยรายวัน <b>${fmt(v, 1)} µg/m³</b><br><span style="color:${t.text3}">จาก ${n} ชั่วโมง</span>`;
+    } else {
+      const rows = mode === 'day' ? 1 : Math.round((range.to - range.from) / DAY_MS);
+      const dayStart = (i) => range.from + i * DAY_MS;
+      yLabels = Array.from({ length: rows }, (_, i) =>
+        mode === 'week' ? `${WEEKDAYS[i]} ${dm(dayStart(i))}` : dm(dayStart(i))
+      );
+      const grid = {};
+      points.forEach(([ts, v]) => {
+        const row = Math.floor((ts - range.from) / DAY_MS);
+        grid[`${bkk(ts).getUTCHours()}-${row}`] = v;
+      });
+      for (let r = 0; r < rows; r++) {
+        for (let x = 0; x < 24; x++) {
+          const v = grid[`${x}-${r}`];
+          data.push(v === undefined ? [x, r, null, 0] : [x, r, v, 1]);
+        }
+      }
+      cellLabel = (x, y) => `${mode === 'week' ? WEEKDAYS[y] + ' ' : ''}${dm(dayStart(y))} สิ้นสุด ${pad2(x)}:00`;
+    }
+
+    const filled = data.filter((p) => p[2] !== null);
+    const missing = data.filter((p) => p[2] === null).map((p) => [p[0], p[1], 0]);
+
+    $('heatTitle').textContent = mode === 'year' ? 'PM2.5 เฉลี่ยรายวัน แยกตามเดือน' : mode === 'day' ? 'PM2.5 ตามชั่วโมง' : 'PM2.5 ตามวันและชั่วโมง';
+    $('heatNote').textContent = `${periodText(mode, range)} · ${
+      mode === 'year' ? `มีข้อมูล ${filled.length} วัน` : `มีข้อมูล ${filled.length} ชั่วโมง`
+    }${!src || (heat.fullLoading && src !== state.data && !heat.full) ? ' · กำลังโหลด…' : ''}`;
+
+    const el = $('heatChart');
+    const rowPx = mode === 'year' || mode === 'month' ? 18 : 34;
+    const height = mode === 'day' ? 150 : yLabels.length * rowPx + 70;
+    if (el.style.height !== `${height}px`) {
+      el.style.height = `${height}px`;
+      c.resize();
+    }
+
     c.setOption(
       {
         animation: false,
         textStyle: { fontFamily: t.font },
-        grid: { left: 36, right: 12, top: 8, bottom: 28 },
+        grid: { left: mode === 'week' ? 72 : mode === 'year' ? 30 : 48, right: 12, top: 8, bottom: 46 },
         tooltip: {
           backgroundColor: t.surface,
           borderColor: t.line,
           textStyle: { color: t.text, fontFamily: t.font },
           formatter: (p) =>
-            `วัน${days[p.value[1]].replace('.', '')} เวลา ${String(p.value[0]).padStart(2, '0')}:00–${String(p.value[0]).padStart(2, '0')}:59<br>PM2.5 เฉลี่ย <b>${fmt(p.value[2], 1)} µg/m³</b><br>${levelOf(p.value[2])}<br><span style="color:${t.text3}">จาก ${p.value[3]} ชั่วโมง</span>`,
+            p.seriesIndex === 0
+              ? `${cellLabel(p.value[0], p.value[1])}<br>ไม่มีข้อมูล`
+              : `${cellLabel(p.value[0], p.value[1])}<br>${valueText(p.value[2], p.value[3])}<br>${levelOf(p.value[2])}`,
         },
         xAxis: {
           type: 'category',
-          data: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0')),
+          data: xLabels,
+          name: mode === 'year' ? 'เดือน' : HOUR_ENDING,
+          nameLocation: 'middle',
+          nameGap: 26,
+          nameTextStyle: { color: t.text3, fontSize: 11 },
           axisLine: { show: false },
           axisTick: { show: false },
-          axisLabel: { color: t.text3, interval: 2 },
-          splitArea: { show: false },
+          axisLabel: { color: t.text3, interval: mode === 'year' ? 0 : mode === 'day' ? 1 : 2, fontSize: 11 },
         },
         yAxis: {
           type: 'category',
-          data: days,
+          data: yLabels,
           inverse: true,
           axisLine: { show: false },
           axisTick: { show: false },
-          axisLabel: { color: t.text3 },
+          axisLabel: { color: t.text3, fontSize: 11, interval: 0 },
         },
         visualMap: {
-          // แต่ละช่องเก็บ [ชั่วโมง, วัน, ค่าเฉลี่ย, จำนวนชั่วโมง] ต้องระบุว่าลงสีจากมิติที่ 2 (ค่าเฉลี่ย)
+          // แต่ละช่องเก็บ [x, y, ค่า, จำนวนชั่วโมง] ลงสีจากมิติที่ 2 (ค่า) เฉพาะชุดที่มีข้อมูล
           dimension: 2,
+          seriesIndex: 1,
           type: 'piecewise',
           pieces: PM25_PIECES.map(({ band, ...p }) => p),
           // คำอธิบายสีทำเป็น HTML ใต้กราฟแทน เพราะของ ECharts ไม่ตัดบรรทัดบนจอมือถือ
@@ -853,8 +1051,14 @@
         series: [
           {
             type: 'heatmap',
-            data: h.cells,
-            itemStyle: { borderColor: t.surface, borderWidth: 2, borderRadius: 3 },
+            data: missing,
+            itemStyle: { color: missingColor, borderColor: t.surface, borderWidth: 1 },
+            emphasis: { itemStyle: { borderColor: t.text, borderWidth: 1 } },
+          },
+          {
+            type: 'heatmap',
+            data: filled,
+            itemStyle: { borderColor: t.surface, borderWidth: 1 },
             emphasis: { itemStyle: { borderColor: t.text, borderWidth: 1 } },
           },
         ],
@@ -913,6 +1117,7 @@
       b.setAttribute('aria-pressed', String(on));
     });
     try { localStorage.setItem('envidas.days', String(days)); } catch (e) { /* ไม่มี storage ก็ไม่เป็นไร */ }
+    setHeatMode(MODE_BY_DAYS[days]);
     const snap = loadSnapshot(days);
     if (snap) {
       state.data = snap;
@@ -938,6 +1143,19 @@
       b.classList.toggle('is-active', on);
       b.setAttribute('aria-pressed', String(on));
       b.addEventListener('click', () => setRange(Number(b.dataset.days)));
+    });
+
+    setHeatMode(MODE_BY_DAYS[saved]);
+    document.querySelectorAll('#heatMode button').forEach((b) =>
+      b.addEventListener('click', () => {
+        setHeatMode(b.dataset.mode, true);
+        if (state.data) renderHeatmap(state.data, theme());
+      })
+    );
+    $('heatPeriod').addEventListener('change', (e) => {
+      if (!periodMatches(heat.mode, e.target.value)) return;
+      heat.period = e.target.value;
+      if (state.data) renderHeatmap(state.data, theme());
     });
 
     $('refreshBtn').addEventListener('click', load);

@@ -365,6 +365,20 @@ h3 { font-size: 1rem; font-weight: 600; }
   margin-top: 24px;
 }
 .duo .panel { margin: 0; }
+.panel-gap { margin-top: 24px; }
+.heat-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.segmented.compact button { min-height: 30px; padding: 0 10px; font-size: 0.82rem; }
+.period-pick { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 0.82rem; }
+.period-pick input {
+  min-height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.period-pick input[type="number"] { width: 90px; }
 
 .table-panel { margin-top: 16px; }
 .table-panel summary { cursor: pointer; font-weight: 600; }
