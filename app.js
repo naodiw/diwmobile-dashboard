@@ -225,10 +225,13 @@
     return /ยืนยันด้วยมือ|กรอกเอง|^manual$/i.test(s) ? '' : s;
   }
 
+  const addressText = (loc) => (loc && loc.address && loc.address.text) || '';
+
   function renderHeader(d) {
     $('stationName').textContent = d.station ? `สถานี ${d.station.replace(/_/g, ' ')}` : 'สถานีตรวจวัด';
-    const label = placeLabel(d.location);
-    $('placeLine').textContent = label ? `จอดอยู่ที่ ${label}` : '';
+    // ชื่อจุดที่กรอกเองมาก่อน แล้วต่อด้วยที่อยู่ระดับตำบลที่ได้จากพิกัด
+    const place = [placeLabel(d.location), addressText(d.location)].filter(Boolean).join(' · ');
+    $('placeLine').textContent = place ? `จอดอยู่ที่ ${place}` : '';
     $('updatedAt').textContent = d.live.updatedAt ? `อัปเดต ${thaiDateTime(d.live.updatedAtMs)} น.` : '';
     document.title = `${d.station || 'สถานีตรวจวัด'} · คุณภาพอากาศ`;
   }
@@ -322,9 +325,12 @@
       $('gmapsLink').hidden = true;
       return;
     }
-    const label = placeLabel(loc);
+    const custom = placeLabel(loc);
+    const address = addressText(loc);
+    const label = custom || address;
     $('locLabel').textContent = label || 'ตำแหน่งรถ';
-    $('locCoords').textContent = `${loc.lat.toFixed(5)}, ${loc.lon.toFixed(5)}`;
+    $('locCoords').textContent = [custom && address ? address : '', `${loc.lat.toFixed(5)}, ${loc.lon.toFixed(5)}`]
+      .filter(Boolean).join(' · ');
     const gm = $('gmapsLink');
     gm.hidden = false;
     gm.href = `https://www.google.com/maps?q=${loc.lat},${loc.lon}`;
