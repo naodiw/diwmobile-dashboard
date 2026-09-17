@@ -130,6 +130,41 @@
 
   /* ================================================================ fetch */
 
+  /**
+   * วิธีหลัก: fetch แบบไม่แนบ cookie (credentials: 'omit')
+   * Apps Script ส่ง Access-Control-Allow-Origin: * จึงเรียกข้ามโดเมนได้ตรง ๆ
+   * ต่างจาก <script> (JSONP) ที่เบราว์เซอร์แนบ cookie ของ Google ไปด้วย ถ้าผู้ชม
+   * ล็อกอิน Google ไว้ (โดยเฉพาะหลายบัญชีบนมือถือ) Apps Script อาจตอบเป็นหน้า HTML
+   * แทนข้อมูล ทำให้หน้าเว็บขึ้นแต่ไม่มีข้อมูล (เจอจริงบนมือถือ 17/09/2026)
+   */
+  async function fetchApi(query) {
+    const url = new URL(API_URL);
+    Object.entries(query).forEach(([k, v]) => url.searchParams.set(k, v));
+    url.searchParams.set('_', String(Date.now()));
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = setTimeout(() => ctrl && ctrl.abort(), 45_000);
+    try {
+      const r = await fetch(url.toString(), {
+        method: 'GET',
+        credentials: 'omit',
+        cache: 'no-store',
+        redirect: 'follow',
+        signal: ctrl ? ctrl.signal : undefined,
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const text = await r.text();
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        throw new Error('ได้หน้าเว็บแทนข้อมูล');
+      }
+    } catch (err) {
+      throw new Error(err && err.name === 'AbortError' ? 'หมดเวลารอ' : (err && err.message) || String(err));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   function fetchJsonp(query) {
     return new Promise((resolve, reject) => {
       const cb = `envidas_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -164,7 +199,17 @@
         data = await r.json();
       } else {
         if (!API_URL) throw new Error('ยังไม่ได้ตั้งค่า URL ของ API ใน index.html (window.ENVIDAS_API)');
-        data = await fetchJsonp({ dashboard: '1', days: state.days, resolution: 'auto' });
+        const query = { dashboard: '1', days: state.days, resolution: 'auto' };
+        try {
+          data = await fetchApi(query);
+        } catch (e1) {
+          // สำรอง: JSONP (เผื่อเบราว์เซอร์/เครือข่ายบางแห่งบล็อก fetch ข้ามโดเมน)
+          try {
+            data = await fetchJsonp(query);
+          } catch (e2) {
+            throw new Error(`fetch: ${e1.message} / script: ${e2.message}`);
+          }
+        }
       }
       if (!data || data.status !== 'ok') throw new Error((data && data.message) || 'API ตอบกลับผิดรูปแบบ');
       if (data.days && Number(data.days) !== state.days) return; // ผู้ใช้เปลี่ยนช่วงเวลาไปแล้ว
